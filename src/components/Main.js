@@ -674,7 +674,7 @@ const GstCalculate = () => {
         </div>
       )}
       {calculationResult && (
-        <div className="mt-8"> 
+        <div className="mt-8">
           <h3 className="text-xl font-bold mb-4">Calculation Result</h3>
           <pre className="bg-gray-200 p-4 rounded-md">
             {JSON.stringify(calculationResult, null, 2)}

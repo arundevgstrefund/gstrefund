@@ -99,175 +99,146 @@ const GstCalculate = () => {
     setLoading(true);
 
     try {
-      // Login (replace with your actual credentials)
-      const loginResponse = await axios.post(
-        "https://api.mygstrefund.com/api/v1/login",
-        {
-          email: "arun.pandey@mygstrefund.com",
-          password: "ARUNgstrefund1508@@",
-        }
-      );
-
-      const token = loginResponse.data.data.token;
+      const token = await getAuthToken();
       localStorage.setItem("token", token);
 
-      // GSTIN Existence Check
-      const gstinResponse = await axios.get(
-        `https://api.mygstrefund.com/api/v1/gstin/exists?gstin=${formData.gstin}`,
+      const gstinExists = await checkGstinExistence(token);
+      if (gstinExists) {
+        await processRefund(token);
+      } else {
+        await addGstin(token);
+        await checkGstinExistence(token);
+        await requestOtp(token);
+      }
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getAuthToken = async () => {
+    const response = await axios.post(
+      "https://api.mygstrefund.com/api/v1/login",
+      {
+        email: "arun.pandey@mygstrefund.com",
+        password: "ARUNgstrefund1508@@",
+      }
+    );
+    return response.data.data.token;
+  };
+
+  const checkGstinExistence = async (token) => {
+    const response = await axios.get(
+      `https://api.mygstrefund.com/api/v1/gstin/exists?gstin=${formData.gstin}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const gstinExists = response.data.data.exists;
+    setGstinId(response.data.data.gstin.id);
+    return gstinExists;
+  };
+  
+  const processRefund = async (token) => {
+    try {
+      const refundCalculate = await axios.post(
+        "https://api.mygstrefund.com/api/v1/refund/calculate",
+        {
+          gstin_id: gstinId,
+          refund_type_id: parseInt(formData.refundType, 10),
+          from: fromMonthYear,
+          to: toMonthYear,
+        },
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      const gstinId = gstinResponse.data.data.gstin.id;
-      setGstinId(gstinId);
-      if (gstinResponse.data.data.exists) {
-        try {
-          // First API call to calculate refund
-          const refundCalculate = await axios.post(
-            "https://api.mygstrefund.com/api/v1/refund/calculate",
-            {
-              gstin_id: gstinId,
-              refund_type_id: parseInt(formData.refundType, 10),
-              from: fromMonthYear,
-              to: toMonthYear,
-            },
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
 
-          // Log response from the first API call
-          console.log("Refund Calculate Response:", refundCalculate.data);
+      const calculateId = refundCalculate.data.data.id;
+      setCalculateId(calculateId);
 
-          const calculateId = refundCalculate.data.data.id;
-          setCalculateId(calculateId);
-
-          const delay = (ms) =>
-            new Promise((resolve) => setTimeout(resolve, ms));
-
-          if (refundCalculate.status === 200) {
-            await delay(10000);
-
-            // Second API call to get refunded value
-            const refundedValue = await axios.get(
-              `https://api.mygstrefund.com/api/v1/refund/calculate/${calculateId}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-
-            // Log response from the second API call
-            console.log("Refunded Value Response:", refundedValue.data);
-
-            setRefundedValue(refundedValue.data.data);
-            const trackId = refundCalculate.data.data.track_id;
-            setTrackId(trackId);
-
-            // Third API call to get the PDF
-            const pdfResponse = await axios.get(
-              `https://api.mygstrefund.com/api/v1/report/export/${trackId}/pdf`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                  Accept: "application/json, text/plain, */*",
-                },
-                responseType: "blob",
-              }
-            );
-
-            // Log response from the third API call
-            console.log("PDF Response:", pdfResponse);
-
-            const pdfBlob = new Blob([pdfResponse.data], {
-              type: "application/pdf",
-            });
-
-            const pdfUrl = URL.createObjectURL(pdfBlob);
-            window.open(pdfUrl);
-
-            // Optionally, reset the form
-            // resetForm();
-          } else {
-            // Handle error based on refundCalculate status code
-            if (refundCalculate.status === 400) {
-              console.log(
-                "Refund Calculation Error Response:",
-                refundCalculate.data
-              );
-            }
-          }
-        } catch (refundCalculateError) {
-          toast.error("Please activate your GSTIN via OTP");
-
-          try {
-            await axios.get(
-              `https://api.mygstrefund.com/api/v1/gstin/otp/request/${gstinId}`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              }
-            );
-            setShowOtpPopup(true);
-          } catch (additionalApiError) {
-            toast.error("Please enable your api at GSTIN Portal");
-            console.error("Error hitting additional API:", additionalApiError);
-            setIsModalOpen(true);
-          }
-        }
-      } else {
-        const addGstinResponse = await axios.post(
-          "https://api.mygstrefund.com/api/v1/gstin",
-          {
-            gstin: formData.gstin,
-            gst_username: formData.gstinusername,
-            company_name: "ccc",
-          },
+      if (refundCalculate.status === 200) {
+        const refundedValue = await axios.get(
+          `https://api.mygstrefund.com/api/v1/refund/calculate/${calculateId}`,
           {
             headers: { Authorization: `Bearer ${token}` },
           }
         );
 
-        if (addGstinResponse.status === 200) {
-          // Re-check GSTIN existence after creation
-          const gstinResponseAfterCreated = await axios.get(
-            `https://api.mygstrefund.com/api/v1/gstin/exists?gstin=${formData.gstin}`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-          const gstinIdAfterCreated =
-            gstinResponseAfterCreated.data.data.gstin.id;
+        setRefundedValue(refundedValue.data.data);
+        const trackId = refundCalculate.data.data.track_id;
+        setTrackId(trackId);
 
-          const otpResponse = await axios.get(
-            `https://api.mygstrefund.com/api/api/v1/gstin/otp/request/${gstinIdAfterCreated}`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-
-          if (otpResponse.status === 200) {
-            setShowOtpPopup(true);
-          } else {
-            setShowInactivePopup(true);
+        const pdfResponse = await axios.get(
+          `https://api.mygstrefund.com/api/v1/report/export/${trackId}/pdf`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/plain, */*",
+            },
+            responseType: "blob",
           }
-        }
-      }
-    } catch (error) {
-      console.error("Error:", error);
+        );
 
-      // Check if error occurred during addGstinResponse
-      if (
-        error.config &&
-        error.config.url.endsWith("https://api.mygstrefund.com/api/v1/gstin")
-      ) {
-        toast.error("Invalid GSTIN,Please fill valid GSTIN");
+        const pdfBlob = new Blob([pdfResponse.data], {
+          type: "application/pdf",
+        });
+
+        const pdfUrl = URL.createObjectURL(pdfBlob);
+        window.open(pdfUrl);
+
+        // Optionally, reset the form
+        // resetForm();
       } else {
-        toast.error("An error occurred during the process.");
+        handleRefundError(refundCalculate);
       }
-    } finally {
-      setLoading(false);
+    } catch (refundCalculateError) {
+      toast.error("Please activate your GSTIN via OTP");
+      setShowOtpPopup(true);
+      await requestOtp(token);
+    }
+  };
+
+  const addGstin = async (token) => {
+    await axios.post(
+      "https://api.mygstrefund.com/api/v1/gstin",
+      {
+        gstin: formData.gstin,
+        gst_username: formData.gstinusername,
+        company_name: "ccc",
+      },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  };
+
+  const requestOtp = async (token) => {
+    await axios.get(
+      `https://api.mygstrefund.com/api/v1/gstin/otp/request/${gstinId}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+  };
+
+  const handleError = (error) => {
+    console.error("Error:", error);
+    if (
+      error.config &&
+      error.config.url.endsWith("https://api.mygstrefund.com/api/v1/gstin")
+    ) {
+      toast.error("Invalid GSTIN, Please fill valid GSTIN");
+    } else {
+      toast.error("An error occurred during the process.");
+    }
+  };
+
+  const handleRefundError = (refundCalculate) => {
+    if (refundCalculate.status === 400) {
+      console.log("Refund Calculation Error Response:", refundCalculate.data);
     }
   };
 
@@ -276,7 +247,7 @@ const GstCalculate = () => {
     const token = localStorage.getItem("token");
 
     try {
-      const calculateResponse = await axios.put(
+      const response = await axios.put(
         `https://api.mygstrefund.com/api/v1/gstin/otp/verify/${gstinId}`,
         {
           otp: formData.otp,
@@ -286,87 +257,11 @@ const GstCalculate = () => {
         }
       );
 
-      if (calculateResponse.status === 200) {
-        setCalculationResult(calculateResponse.data);
+      if (response.status === 200) {
+        setCalculationResult(response.data);
         toast.success("Now your GSTIN is active");
         setShowOtpPopup(false);
-
-        try {
-          // First API call to calculate refund
-          const refundCalculate = await axios.post(
-            "https://api.mygstrefund.com/api/v1/refund/calculate",
-            {
-              gstin_id: gstinId,
-              refund_type_id: parseInt(formData.refundType, 10),
-              from: fromMonthYear,
-              to: toMonthYear,
-            },
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-
-          // Log response from the first API call
-          console.log("Refund Calculate Response:", refundCalculate.data);
-
-          const calculateId = refundCalculate.data.data.id;
-          setCalculateId(calculateId);
-
-          if (refundCalculate.status === 200) {
-            // Second API call to get refunded value
-            const refundedValue = await axios.get(
-              `https://api.mygstrefund.com/api/v1/refund/calculate/${calculateId}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-
-            // Log response from the second API call
-            console.log("Refunded Value Response:", refundedValue.data);
-
-            setRefundedValue(refundedValue.data.data);
-            const trackId = refundCalculate.data.data.track_id;
-            setTrackId(trackId);
-
-            // Third API call to get the PDF
-            const pdfResponse = await axios.get(
-              `https://api.mygstrefund.com/api/v1/report/export/${trackId}/pdf`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                  Accept: "application/json, text/plain, */*",
-                },
-                responseType: "blob",
-              }
-            );
-
-            // Log response from the third API call
-            console.log("PDF Response:", pdfResponse);
-
-            const pdfBlob = new Blob([pdfResponse.data], {
-              type: "application/pdf",
-            });
-
-            const pdfUrl = URL.createObjectURL(pdfBlob);
-            window.open(pdfUrl);
-
-            // Optionally, reset the form
-            // resetForm();
-          } else {
-            // Handle error based on refundCalculate status code
-            if (refundCalculate.status === 400) {
-              console.log(
-                "Refund Calculation Error Response:",
-                refundCalculate.data
-              );
-            }
-          }
-        } catch (refundCalculateError) {
-          toast.error("Oops! Something Went Wrong Please try After sometime");
-        }
+        await processRefund(token);
       }
     } catch (error) {
       console.error("Error:", error);
@@ -607,7 +502,9 @@ const GstCalculate = () => {
 
         {refundedValue && renderRefundedTable()}
       </form>
-
+      {/* Make sure to bind modal to your appElement
+      (http://reactcommunity.org/react-modal/accessibility/) */}
+      {/* Modal.setAppElement('#root'); */}
       <div>
         <Modal
           isOpen={isModalOpen}
@@ -674,7 +571,7 @@ const GstCalculate = () => {
         </div>
       )}
       {calculationResult && (
-        <div className="mt-8"> 
+        <div className="mt-8">
           <h3 className="text-xl font-bold mb-4">Calculation Result</h3>
           <pre className="bg-gray-200 p-4 rounded-md">
             {JSON.stringify(calculationResult, null, 2)}
